@@ -1,0 +1,2 @@
+class RoundNotActiveException(Exception):
+    pass
