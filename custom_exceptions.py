@@ -1,5 +1,5 @@
 class RoundNotActiveException(Exception):
     pass
 
-class InsufficientPrivileges(Exception):
+class InsufficientPrivilegesException(Exception):
     pass

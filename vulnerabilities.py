@@ -1,6 +1,7 @@
-import os
-import subprocess
+import re
+from subprocess import Popen, PIPE, DEVNULL
 from pathlib import Path
+
 
 class Vulnerability:
     def __init__(self, description, points):
@@ -11,10 +12,31 @@ class Vulnerability:
         return True
 
 
-class FileVulnerability(Vulnerability):
-    def __init__(self, description, points, file, string, mode=1):
+class CompoundVulnerability(Vulnerability):
+    def __init__(self, description, points, vulns):
         super().__init__(description, points)
-        self.file = file
+        self.vulns = vulns
+    
+    def check(self):
+        return all([v.check() for v in vulns])
+
+
+class FileVulnerability(Vulnerability):
+    def __init__(self, description, points, file, mode=1):
+        super().__init__(description, points)
+        self.file = Path(file)
+        self.mode = mode
+    
+    def check(self):
+        if self.mode:
+            return self.file.is_file()
+        else:
+            return not self.file.is_file()
+
+
+class StringInFileVulnerability(FileVulnerability):
+    def __init__(self, description, points, file, string, mode=1):
+        super().__init__(description, points, file)
         self.string = string
         self.mode = mode
 
@@ -26,24 +48,59 @@ class FileVulnerability(Vulnerability):
                 return self.string not in f.read()
 
 
+class PatternInFileVulnerability(FileVulnerability):
+    def __init__(self, description, points, file, patterns, mode=1):
+        super().__init__(description, points, file)
+        self.patterns = patterns
+        self.mode = mode
+    
+    def check(self):
+        with open(self.file) as f:
+            text = f.read()
+            matches = [(lambda p: re.search(p, text))(p) for p in self.patterns]
+            if self.mode:
+                return all(matches)
+            else:
+                return not any(matches)
+
+
 class CustomCommandVulnerability(Vulnerability):
-    def __init__(self, description, points, command, exit_code):
+    def __init__(self, description, points, command, exit_code=0):
         super().__init__(description, points)
         self.command = command
         self.exit_code = exit_code
     
     def check(self):
-        split_command = [tuple(cmd.split()) for cmd in self.command.split('|')]
+        '''
+        NOTES: 
+        - mostly working
+        - need to debug windows compatibility with commands like echo "test" | findstr "foo"
+        '''
+        split_command = [cmd.strip() for cmd in self.command.split('|')]
         
         if split_command:
-            ps = subprocess.Popen(split_command.pop(0), stdout=subprocess.PIPE)
+            ps = Popen(split_command.pop(0), stdout=PIPE)
             while split_command:
-                cmd = split_command.pop(0)
-                print('DEBUG: cmd', cmd)
-                ps = subprocess.Popen(cmd, stdin=ps.stdout, stdout=subprocess.PIPE)
+                ps = Popen(split_command.pop(0), stdin=ps.stdout, stdout=PIPE)
             ps.communicate()
-            print('DEBUG: final exit code', ps.returncode)
+            ps.stdout.close()
             return ps.returncode == self.exit_code
         else:
             return True
+
+
+# FAULTY OOP DESIGN, need to find a way to get os without creating engine first
+class PackageVulnerability(Vulnerability):
+    def __init__(self, description, points, package, version, mode=1):
+        super().__init__(description, points)
+        self.package = package
+        self.version = version
+        self.mode = mode
         
+    def check(self):
+        try:
+            ps = Popen('dpkg -s ' + self.package, stdout=PIPE)
+        except FileNotFoundError:
+            ps = Popen('powershell.exe Get-Package ' + repr(self.package), stdout=PIPE)
+        ps.communicate()
+        return not ps.returncode == self.mode

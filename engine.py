@@ -5,16 +5,13 @@ from datetime import datetime, timedelta
 from custom_exceptions import InsufficientPrivilegesException, RoundNotActiveException
 
 class Engine:
-    def __init__(self, round_name, start, length, vuln, local=False):
-        if length <= 0: 
-            raise ValueError('Length of a round cannot be less than or equal to 0.')
-        if not vulns:
-            raise ValueError('A round cannot have 0 vulnerabilities')
-
+    def __init__(self, round_name, os, start, length, vulns, local=False):
         self.round_name = round_name
+        self.os = os
         self.start = start
         self.stop = start + length
-        self.vulns = {v: False for v in vulns}
+        self.vulns = vulns
+        self.local = local
 
         self.total_points = sum(v.points for v in vulns)
         self.current_points = 0
@@ -23,23 +20,26 @@ class Engine:
         self.current_vulns = 0
 
     def __validate(self):
-        try:
-            is_admin = os.geteuid() == 0
-        except AttributeError:
-            is_admin = ctypes.windll.shell32.IsUserAnAdmin() != 0
+        if not self.local:
+            if self.os == 'Linux':
+                is_admin = os.geteuid() == 0
+            else:
+                is_admin = ctypes.windll.shell32.IsUserAnAdmin() != 0
 
-        if not is_admin:
-            raise InsufficientPrivilegesException('You must run this script as root/Administrator')
+            if not is_admin:
+                raise InsufficientPrivilegesException('You must run this script as root/Administrator')
 
-        curr_timestamp = datetime.now()
-        if curr_timestamp < self.start:
-            raise RoundNotActiveException('Round is not yet active/scoring.')
-        elif curr_timestamp > self.stop:
-            raise RoundNotActiveException('Round is over and is no longer scoring.')
+            curr_timestamp = datetime.now()
+            if curr_timestamp < self.start:
+                raise RoundNotActiveException('Round is not yet active/scoring.')
+            elif curr_timestamp > self.stop:
+                raise RoundNotActiveException('Round is over and is no longer scoring.')
 
-    def __score(self):        
+    def score(self):
+        self.__validate()
+
         points_scored, num_vulns, vulns_scored = 0, 0, []
-        for v in vulns:
+        for v in self.vulns:
             if v.check():
                 points_scored += v.points
                 num_vulns += 1
@@ -51,7 +51,3 @@ class Engine:
         self.current_vulns = num_vulns
 
         return vulns_scored
-
-    def run(self):
-        self.__validate()
-        self.__score()
